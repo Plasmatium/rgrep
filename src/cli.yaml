@@ -1,0 +1,35 @@
+name: rgrep
+version: "1.0"
+author: J.W. <slv0309@gmail.com>
+about: toy project that substitude grep
+args:
+    - TESTER:
+        about: Sets the tester string.
+        required: true
+        index: 1
+    - INPUT:
+        about: Sets the input file or dir to use.
+        required: true
+        index: 2
+    - after:
+        short: A
+        long: after
+        value_name: AFTER_LINES
+        about: Print lines after the matches.
+        takes_value: true
+    - before:
+        short: B
+        long: before
+        value_name: BEFORE_LINES
+        about: Print lines before the matches.
+        takes_value: true
+    - center:
+        short: C
+        long: center
+        value_name: CENTER_LINES
+        about: Print lines around the matches.
+        takes_value: true
+    - verbose:
+        short: v
+        multiple_occurrences: true
+        about: Sets the level of verbosity.
