@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, mem, rc::Rc, cell::RefCell};
+use std::{collections::VecDeque, mem, rc::Rc, cell::RefCell, fmt::Debug, ops::Deref};
 
 use colored::Colorize;
 
@@ -76,4 +76,64 @@ fn test_replace_all() {
 
     let r = re.replace_all(text, "$matched".blue().to_string());
     println!("{}, is borrowed: {}", &r, is_borrowed(&r));
+}
+
+#[derive(Debug, Clone)]
+struct MyRc<T: Debug>(Rc<T>);
+
+impl <T: Debug> MyRc<T> {
+    fn new(x: T) -> Self {
+        Self(Rc::new(x))
+    }
+}
+
+impl<T: Debug> Drop for MyRc<T> {
+    fn drop(&mut self) {
+        println!("I'm dropped: {:?}", &self);
+        drop(self)
+    }
+}
+
+impl<T: Debug> Deref for MyRc<T> {
+    type Target = Rc<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[test]
+fn test_drop_rc_in_vec() {
+    let mut v: Vec<MyRc<i32>> = Vec::new();
+    for i in 0..10 {
+        v.push(MyRc::new(i));
+    }
+
+    let mut vd: VecDeque<MyRc<i32>> = VecDeque::new();
+    println!("shit!!!!!!!!!!!!!!!!!");
+    for _ in 0..10 {
+        vd.push_back(v[3].clone());
+        vd.pop_front();
+    }
+    println!("fuck!!!!!!!!!!!!!!!!!");
+    println!("size of MyRc: {}", size_of(&v[6]));
+
+    let mut vv: Vec<MyRc<i32>> = Vec::new();
+    vv.push(v[2].clone());
+    println!("lalala");
+    for i in 7..10 {
+        // vv[0] = v[i].clone();
+        // let _ = std::mem::replace(&mut vv[0], v[i].clone());
+        println!("before");
+        vv[0] = v[i].clone();
+        println!("{:?}, after", vv[0]);
+    }
+    // vv[0] = v[9].clone();
+    println!("bdadbdaldkf");
+
+    let mut a = MyRc::new(99999);
+    println!("fucking before");
+    a = v[5].clone();
+    println!("{:?}", a);
+    println!("fucking after");
 }

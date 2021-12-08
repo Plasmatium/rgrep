@@ -1,6 +1,7 @@
 mod matcher;
 mod utils;
 mod test;
+mod error;
 
 use clap::{load_yaml, App, crate_version};
 use colored::*;
