@@ -54,7 +54,11 @@ impl FileMatcher {
             let line = line + 1;
             // step1: ensure around_lines
             let content = r?;
-            let mut lw = Rc::new(LineWrap { line, content, exact_matched: false });
+            let mut lw = Rc::new(LineWrap {
+                line,
+                content,
+                exact_matched: false,
+            });
             if around_lines.len() > max_len {
                 around_lines.pop_front();
             }
