@@ -54,7 +54,7 @@ impl FileMatcher {
             let line = line + 1;
             // step1: ensure around_lines
             let content = r?;
-            let mut lw = Rc::new(LineWrap { line, content });
+            let mut lw = Rc::new(LineWrap { line, content, exact_matched: false });
             if around_lines.len() > max_len {
                 around_lines.pop_front();
             }
@@ -69,7 +69,7 @@ impl FileMatcher {
             // step3: regex match
             let replaced = self
                 .re
-                .replace_all(&lw.content, "$matched".blue().bold().to_string());
+                .replace_all(&lw.content, "$matched".yellow().bold().to_string());
             let is_matched = !is_borrowed(&replaced);
 
             // step4: merge to last matched if needed
@@ -77,6 +77,7 @@ impl FileMatcher {
                 lw = Rc::new(LineWrap {
                     line,
                     content: replaced.into_owned(),
+                    exact_matched: true,
                 });
                 if let Some(last) = result.last_mut() {
                     if last.need_to_merge(lw.line, self.after_lines + self.before_lines) {
@@ -106,12 +107,16 @@ impl FileMatcher {
 pub struct LineWrap {
     line: usize,
     content: String,
+    exact_matched: bool,
 }
 
 impl fmt::Display for LineWrap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let line = format!("L{}:\t", self.line).green().bold();
-        fmt::Display::fmt(&format!("{}{}\n", line, self.content), f)
+        let line = match self.exact_matched {
+            true => format!("{}L{}:\t{}\n", "-->".bold(), self.line, self.content).blue(),
+            false => format!("   L{}:\t{}\n", self.line, self.content).green(),
+        };
+        fmt::Display::fmt(&line, f)
     }
 }
 
