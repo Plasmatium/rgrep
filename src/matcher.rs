@@ -1,26 +1,18 @@
-use std::{fs::File, io::{BufReader, Lines, BufRead}, path::Path, collections::VecDeque, cmp, rc::Rc};
+use core::fmt;
+use std::{
+    cmp,
+    collections::VecDeque,
+    fmt::Display,
+    fs::File,
+    io::{BufRead, BufReader, Lines},
+    path::Path,
+    rc::Rc,
+};
 
+use crate::utils::is_borrowed;
 use anyhow::anyhow;
 use colored::Colorize;
 use regex::Regex;
-use crate::utils::is_borrowed;
-
-pub fn test() {
-    // let data = include_str!("/Users/jonnywong/.rustup/toolchains/stable-x86_64-apple-darwin/lib/rustlib/src/rust/library/core/src/iter/range.rs");
-    // let re = Regex::new(r#"trait"#).unwrap();
-
-    // data.lines().into_iter().enumerate().for_each(|(idx, line)| {
-    //     let m = re.find(line);
-    //     match m {
-    //         Some(d) => {
-    //             let line_number = format!("L{}:\t", idx);
-    //             println!("{} {}", line_number.green().bold(), line)
-    //         }
-    //         _ => ()
-    //     }
-    // });
-    // todo!()
-}
 
 pub struct FileMatcher {
     iter: Lines<BufReader<File>>,
@@ -31,7 +23,12 @@ pub struct FileMatcher {
 }
 
 impl FileMatcher {
-    fn new(f: impl AsRef<Path>, before: usize, after: usize, re: Regex) -> anyhow::Result<Self> {
+    pub fn new(
+        f: impl AsRef<Path>,
+        before: usize,
+        after: usize,
+        re: Regex,
+    ) -> anyhow::Result<Self> {
         let reader = BufReader::new(File::open(f.as_ref())?);
         let iter = reader.lines();
         Ok(Self {
@@ -43,7 +40,7 @@ impl FileMatcher {
         })
     }
 
-    fn run(self) -> anyhow::Result<()> {
+    pub fn run(self) -> anyhow::Result<Vec<LineBlock>> {
         let max_len = cmp::max(self.after_lines, self.before_lines);
         let mut around_lines: VecDeque<Rc<LineWrap>> = VecDeque::with_capacity(max_len);
         let mut result: Vec<LineBlock> = Vec::new();
@@ -54,14 +51,14 @@ impl FileMatcher {
         // step4: merge to last matched if needed
         // step5: add all -B to current match
         for (line, r) in self.iter.enumerate() {
+            let line = line + 1;
             // step1: ensure around_lines
             let content = r?;
-            let lw = Rc::new(LineWrap{line, content});
-            around_lines.push_back(lw.clone());
+            let mut lw = Rc::new(LineWrap { line, content });
             if around_lines.len() > max_len {
                 around_lines.pop_front();
             }
-            
+
             // step2: add -A to last matched
             if let Some(last) = result.last_mut() {
                 if last.after.len() < self.after_lines {
@@ -70,56 +67,80 @@ impl FileMatcher {
             }
 
             // step3: regex match
-            let replaced = self.re.replace_all(&lw.content, "$matched".blue().to_string());
-            let is_matched = is_borrowed(&replaced);
-            
+            let replaced = self
+                .re
+                .replace_all(&lw.content, "$matched".blue().bold().to_string());
+            let is_matched = !is_borrowed(&replaced);
+
             // step4: merge to last matched if needed
             if is_matched {
+                lw = Rc::new(LineWrap {
+                    line,
+                    content: replaced.into_owned(),
+                });
                 if let Some(last) = result.last_mut() {
                     if last.need_to_merge(lw.line, self.after_lines + self.before_lines) {
-                        // this line matched, last matched exists, need to merge this line match to last matched
+                        // this line matched<, last matched exists, need to merge this line match to last matched
                         last.extend_medium_to(&mut around_lines)?;
                         // no need to concern step5, should continue here
-                        continue
+                        continue;
                     }
-                } else {
-                    // step5: add all -B to current match
-                    // no need to merge this line match to last matched,
-                    // just push this match to result
-                    // TODO: bugs on variable: after
-                    let (before, after) = around_lines_to_before_and_after(
-                        around_lines.clone().into(), self.before_lines, self.after_lines);
-                    result.push(LineBlock {
-                        before,
-                        medium: vec!(lw),
-                        after: vec!(),
-                    })
                 }
+                // step5: add all -B to current match
+                // no need to merge this line match to last matched,
+                // just push this match to result
+                let before = calc_before_lines(around_lines.clone().into(), self.before_lines);
+                result.push(LineBlock {
+                    before,
+                    medium: vec![lw.clone()],
+                    after: vec![],
+                })
             }
+            around_lines.push_back(lw);
         }
-        todo!()
+        Ok(result)
     }
 }
 
-struct LineWrap {
+#[derive(Debug)]
+pub struct LineWrap {
     line: usize,
     content: String,
 }
 
-struct LineBlock {
+impl fmt::Display for LineWrap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let line = format!("L{}:\t", self.line).green().bold();
+        fmt::Display::fmt(&format!("{}{}\n", line, self.content), f)
+    }
+}
+
+#[derive(Debug)]
+pub struct LineBlock {
     before: Vec<Rc<LineWrap>>,
     medium: Vec<Rc<LineWrap>>,
     after: Vec<Rc<LineWrap>>,
 }
 
+impl fmt::Display for LineBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        LineBlock::fmt_sub_block(&self.before, f)?;
+        LineBlock::fmt_sub_block(&self.medium, f)?;
+        LineBlock::fmt_sub_block(&self.after, f)?;
+        Ok(())
+    }
+}
+
 impl LineBlock {
-    // TODO: not finished
-    fn extend_medium_to(&mut self, around_lines: &mut VecDeque<Rc<LineWrap>>) -> anyhow::Result<()> {
+    fn extend_medium_to(
+        &mut self,
+        around_lines: &mut VecDeque<Rc<LineWrap>>,
+    ) -> anyhow::Result<()> {
         self.after.clear();
         let curr_medium_last_line_wrap = if let Some(last) = self.medium.last() {
             last.to_owned()
         } else {
-            return Err(anyhow!(crate::error::FileMatcherError::InvalidLineBlock))
+            return Err(anyhow!(crate::error::FileMatcherError::InvalidLineBlock));
         };
         let last_medium_line = curr_medium_last_line_wrap.line;
         loop {
@@ -144,12 +165,18 @@ impl LineBlock {
             false
         }
     }
+
+    fn fmt_sub_block(sub_block: &Vec<Rc<LineWrap>>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for lw in sub_block.iter().map(|x| x.clone()) {
+            lw.fmt(f)?
+        }
+        Ok(())
+    }
 }
 
-fn around_lines_to_before_and_after(around_lines: Vec<Rc<LineWrap>>, before: usize, after: usize)
--> (Vec<Rc<LineWrap>>, Vec<Rc<LineWrap>>) {
+fn calc_before_lines(around_lines: Vec<Rc<LineWrap>>, before: usize) -> Vec<Rc<LineWrap>> {
     let total = around_lines.len();
-    let before_lw = &around_lines[total - before..];
-    let after_lw = &around_lines[..after];
-    (before_lw.into(), after_lw.into())
+    let start = if before > total { 0 } else { total - before };
+    let before_lw = &around_lines[start..];
+    before_lw.into()
 }

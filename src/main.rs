@@ -1,13 +1,13 @@
-mod matcher;
-mod utils;
-mod test;
 mod error;
+mod matcher;
+mod playground;
+mod test;
+mod utils;
 
-use clap::{load_yaml, App, crate_version};
+use clap::{crate_version, load_yaml, App};
 use colored::*;
 
 fn main() {
-    matcher::test();
     let yaml_config = load_yaml!("cli.yaml");
     let matches = App::from(yaml_config)
         .version(crate_version!())
@@ -23,6 +23,6 @@ fn main() {
         (Some(_), _, None) => (),
         (_, Some(_), None) => (),
         (None, None, Some(_)) => (),
-        _ => println!("{}", warning)
+        _ => println!("{}", warning),
     }
 }
