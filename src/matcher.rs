@@ -41,8 +41,7 @@ impl FileMatcher {
     }
 
     pub fn run(self) -> anyhow::Result<Vec<LineBlock>> {
-        // let max_len = cmp::max(self.after_lines, self.before_lines);
-        let mut before_lines: VecDeque<Arc<LineWrap>> = VecDeque::with_capacity(max_len);
+        let mut before_lines: VecDeque<Arc<LineWrap>> = VecDeque::with_capacity(self.before + 1);
         let mut result: Vec<LineBlock> = Vec::new();
 
         // step1: ensure around_lines
@@ -63,13 +62,6 @@ impl FileMatcher {
                 before_lines.pop_front();
             }
 
-            // step2: add -A to last matched
-            if let Some(last) = result.last_mut() {
-                if last.after.len() < self.after {
-                    last.after.push(lw.clone())
-                }
-            }
-
             // step3: regex match
             let replaced = self
                 .re
@@ -86,7 +78,7 @@ impl FileMatcher {
                 if let Some(last) = result.last_mut() {
                     if last.need_to_merge(lw.lineno, self.after + self.before) {
                         // this line matched<, last matched exists, need to merge this line match to last matched
-                        last.extend_medium_to(before_lines.clone().into(), lw, self.after, self.before)?;
+                        last.extend_medium_to(before_lines.clone().into(), lw)?;
                         // no need to concern step5, should continue here
                         continue;
                     }
@@ -100,7 +92,15 @@ impl FileMatcher {
                     medium: vec![lw.clone()],
                     after: vec![],
                 })
+            } else {
+                // step2: add -A to last matched
+                if let Some(last) = result.last_mut() {
+                    if last.after.len() < self.after {
+                        last.after.push(lw.clone())
+                    }
+                }
             }
+
             before_lines.push_back(lw);
         }
         Ok(result)
@@ -145,40 +145,19 @@ impl LineBlock {
         &mut self,
         before_lines: Vec<Arc<LineWrap>>,
         curr_matched_line: Arc<LineWrap>,
-        after: usize,
-        before: usize,
+        // after: usize,
+        // before: usize,
     ) -> anyhow::Result<()> {
         let curr_medium_last_line_wrap = self.medium.last().ok_or(anyhow!(
             crate::error::FileMatcherError::InvalidLineBlockMissingMedium
         ))?;
         // need must >= 0 or panic
         let need = curr_matched_line.lineno - curr_medium_last_line_wrap.lineno - 1;
-        // after + before <= 0 or panic
-        if self.after.len() + before_lines.len() > need {
-            panic!("oops... 'after + before > need' should forbidden")
-        }
-
+        let before_length = cmp::min(before_lines.len(), need);
+        let before_lines = &before_lines[before_lines.len() - before_length..];
         let overlapped = self.after.len() + before_lines.len() - need;
-        let ext1 = self.after[]
-
-        match (after, before_lines.len()) {
-            (after, around) if after + around == need => {
-                self.medium.extend_from_slice(&self.after);
-                self.medium.extend_from_slice(&before_lines);
-            }
-            (after, around) if after + around > need => {
-                let exceeded = after + around - need;
-
-            }
-            _ => todo!(),
-        }
-
-        let idx_end = need as i64 - before_lines.len() as i64;
-        if idx_end > 0 && self.after.len() >= idx_end as usize {
-            let append_from_after = &self.after[..idx_end as usize];
-            self.medium.extend_from_slice(append_from_after);
-            self.medium.extend_from_slice(&before_lines);
-        }
+        self.medium.extend_from_slice(&self.after);
+        self.medium.extend_from_slice(&before_lines[overlapped..]);
         self.medium.push(curr_matched_line);
         self.after.clear();
         Ok(())
@@ -210,7 +189,7 @@ fn calc_before_lines(around_lines: Vec<Arc<LineWrap>>, before: usize) -> Vec<Arc
 /* TEST */
 #[test]
 fn test_file_matcher() {
-    let f = "/home/jonny/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/unwind/src/libunwind.rs";
+    let f = "/Users/jonnywong/.rustup/toolchains/stable-x86_64-apple-darwin/lib/rustlib/src/rust/library/unwind/src/libunwind.rs";
     let re = Regex::new(r"(?P<matched>unsafe fn)").unwrap();
     let fm = FileMatcher::new(f, 50, 80, re).unwrap();
     let result = fm.run().expect("shit!!");
