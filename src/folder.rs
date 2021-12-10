@@ -32,14 +32,20 @@ impl FolderHandler {
     pub fn run(&self) -> anyhow::Result<Vec<MatchedFileResult>> {
         let ret: Vec<MatchedFileResult> = glob(&self.glob_pattern)?
             .par_bridge()
-            .map(|entry| -> MatchedFileResult {
+            .map(|entry| -> anyhow::Result<MatchedFileResult> {
                 let path = entry.expect("failed to glob file");
-                let fm = FileMatcher::new(&path, self.before, self.after, self.re.clone())
-                    .expect("failed to create FileMatcher");
-                let result = fm.run().expect("failed to run FileMatcher");
+                let fm = FileMatcher::new(&path, self.before, self.after, self.re.clone())?;
+                let result = fm.run()?;
                 let path = path.into_os_string().into_string().expect("failed to convert path to string");
-                (path, result)
+                Ok((path, result))
             })
+            .filter(|r| match r {
+                Ok(_) => true,
+                Err(e) => {
+                    println!("got error: {}", e);
+                    false
+                }
+            }).map(|x| x.unwrap())
             .collect();
         Ok(ret)
     }

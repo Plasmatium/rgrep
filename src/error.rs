@@ -4,8 +4,11 @@ use thiserror::Error;
 pub enum FileMatcherError {
     #[error("invalid line block: missing medium")]
     InvalidLineBlockMissingMedium,
-    #[error("invalid around lines: around lines length must > overflowed lines")]
-    InvalidAroundLines,
-    #[error("invalid line block: missing after")]
-    InvalidLineBlockMissingAfter,
+}
+
+
+#[derive(Error, Debug)]
+pub enum ArgsError<'a> {
+    #[error("invalid arg --{arg:?} (expected positive integer, found {found:?})")]
+    InvalidParseNumberArg { arg: &'a str, found: &'a str}
 }

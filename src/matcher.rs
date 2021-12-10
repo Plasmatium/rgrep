@@ -16,7 +16,6 @@ use regex::Regex;
 
 pub struct FileMatcher {
     iter: Lines<BufReader<File>>,
-    last_matched_line: usize,
     before: usize,
     after: usize,
     re: Regex,
@@ -33,7 +32,6 @@ impl FileMatcher {
         let iter = reader.lines();
         Ok(Self {
             iter,
-            last_matched_line: 0,
             before,
             after,
             re,

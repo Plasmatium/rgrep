@@ -3,12 +3,12 @@ version: "1.0"
 author: J.W. <slv0309@gmail.com>
 about: toy project that substitude grep
 args:
-    - TESTER:
-        about: Sets the tester string.
+    - PATTERN:
+        about: Sets the pattern string.
         required: true
         index: 1
     - INPUT:
-        about: Sets the input file or dir to use.
+        about: Sets the input file or dir or glob to use.
         required: true
         index: 2
     - after:
