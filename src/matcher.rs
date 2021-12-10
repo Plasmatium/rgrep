@@ -6,7 +6,7 @@ use std::{
     fs::File,
     io::{BufRead, BufReader, Lines},
     path::Path,
-    rc::Rc,
+    sync::Arc,
 };
 
 use crate::utils::is_borrowed;
@@ -42,7 +42,7 @@ impl FileMatcher {
 
     pub fn run(self) -> anyhow::Result<Vec<LineBlock>> {
         let max_len = cmp::max(self.after_lines, self.before_lines);
-        let mut around_lines: VecDeque<Rc<LineWrap>> = VecDeque::with_capacity(max_len);
+        let mut around_lines: VecDeque<Arc<LineWrap>> = VecDeque::with_capacity(max_len);
         let mut result: Vec<LineBlock> = Vec::new();
 
         // step1: ensure around_lines
@@ -54,8 +54,8 @@ impl FileMatcher {
             let line = line + 1;
             // step1: ensure around_lines
             let content = r?;
-            let mut lw = Rc::new(LineWrap {
-                line,
+            let mut lw = Arc::new(LineWrap {
+                lineno: line,
                 content,
                 exact_matched: false,
             });
@@ -78,15 +78,15 @@ impl FileMatcher {
 
             // step4: merge to last matched if needed
             if is_matched {
-                lw = Rc::new(LineWrap {
-                    line,
+                lw = Arc::new(LineWrap {
+                    lineno: line,
                     content: replaced.into_owned(),
                     exact_matched: true,
                 });
                 if let Some(last) = result.last_mut() {
-                    if last.need_to_merge(lw.line, self.after_lines + self.before_lines) {
+                    if last.need_to_merge(lw.lineno, self.after_lines + self.before_lines) {
                         // this line matched<, last matched exists, need to merge this line match to last matched
-                        last.extend_medium_to(&mut around_lines)?;
+                        last.extend_medium_to(around_lines.clone().into(), lw)?;
                         // no need to concern step5, should continue here
                         continue;
                     }
@@ -109,7 +109,7 @@ impl FileMatcher {
 
 #[derive(Debug)]
 pub struct LineWrap {
-    line: usize,
+    lineno: usize,
     content: String,
     exact_matched: bool,
 }
@@ -117,8 +117,8 @@ pub struct LineWrap {
 impl fmt::Display for LineWrap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let line = match self.exact_matched {
-            true => format!("{}L{}:\t{}\n", "-->".bold(), self.line, self.content).blue(),
-            false => format!("   L{}:\t{}\n", self.line, self.content).green(),
+            true => format!("{}L{}:\t{}\n", "-->".bold(), self.lineno, self.content).blue(),
+            false => format!("   L{}:\t{}\n", self.lineno, self.content).green(),
         };
         fmt::Display::fmt(&line, f)
     }
@@ -126,9 +126,9 @@ impl fmt::Display for LineWrap {
 
 #[derive(Debug)]
 pub struct LineBlock {
-    before: Vec<Rc<LineWrap>>,
-    medium: Vec<Rc<LineWrap>>,
-    after: Vec<Rc<LineWrap>>,
+    before: Vec<Arc<LineWrap>>,
+    medium: Vec<Arc<LineWrap>>,
+    after: Vec<Arc<LineWrap>>,
 }
 
 impl fmt::Display for LineBlock {
@@ -143,39 +143,33 @@ impl fmt::Display for LineBlock {
 impl LineBlock {
     fn extend_medium_to(
         &mut self,
-        around_lines: &mut VecDeque<Rc<LineWrap>>,
+        around_lines: Vec<Arc<LineWrap>>,
+        curr_matched_line: Arc<LineWrap>,
     ) -> anyhow::Result<()> {
-        self.after.clear();
-        let curr_medium_last_line_wrap = if let Some(last) = self.medium.last() {
-            last.to_owned()
-        } else {
-            return Err(anyhow!(crate::error::FileMatcherError::InvalidLineBlock));
-        };
-        let last_medium_line = curr_medium_last_line_wrap.line;
-        loop {
-            match around_lines.pop_front() {
-                Some(p) => {
-                    if p.line <= last_medium_line {
-                        continue;
-                    }
-                    self.medium.push(p)
-                }
-                None => break,
-            }
+        let curr_medium_last_line_wrap = self.medium.last().ok_or(anyhow!(
+            crate::error::FileMatcherError::InvalidLineBlockMissingMedium
+        ))?;
+        let need = curr_matched_line.lineno - curr_medium_last_line_wrap.lineno - 1;
+        let idx_end = need as i64 - around_lines.len() as i64;
+        if idx_end > 0 && self.after.len() >= idx_end as usize {
+            let append_from_after = &self.after[..idx_end as usize];
+            self.medium.extend_from_slice(append_from_after);
+            self.medium.extend_from_slice(&around_lines);
         }
-
+        self.medium.push(curr_matched_line);
+        self.after.clear();
         Ok(())
     }
 
     fn need_to_merge(&self, curr_line: usize, intersect_lines: usize) -> bool {
         if let Some(last) = self.medium.last() {
-            curr_line - last.line + 1 <= intersect_lines
+            curr_line - last.lineno <= intersect_lines + 1
         } else {
             false
         }
     }
 
-    fn fmt_sub_block(sub_block: &Vec<Rc<LineWrap>>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt_sub_block(sub_block: &Vec<Arc<LineWrap>>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for lw in sub_block.iter().map(|x| x.clone()) {
             lw.fmt(f)?
         }
@@ -183,9 +177,21 @@ impl LineBlock {
     }
 }
 
-fn calc_before_lines(around_lines: Vec<Rc<LineWrap>>, before: usize) -> Vec<Rc<LineWrap>> {
+fn calc_before_lines(around_lines: Vec<Arc<LineWrap>>, before: usize) -> Vec<Arc<LineWrap>> {
     let total = around_lines.len();
     let start = if before > total { 0 } else { total - before };
     let before_lw = &around_lines[start..];
     before_lw.into()
+}
+
+/* TEST */
+#[test]
+fn test_file_matcher() {
+    let f = "src/matcher.rs";
+    let re = Regex::new(r"(?P<matched>use)").unwrap();
+    let fm = FileMatcher::new(f, 4, 5, re).unwrap();
+    let result = fm.run().expect("shit!!");
+    for lb in result.iter() {
+        println!("{}", lb);
+    }
 }

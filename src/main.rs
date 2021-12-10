@@ -10,10 +10,10 @@ use colored::*;
 use crate::folder::FolderHandler;
 
 fn main() {
-    let match_pattern = "let".to_string();
-    let glob_pattern = "src/*.rs".to_string();
-    let before = 3;
-    let after = 2;
+    let match_pattern = "unsafe fn".to_string();
+    let glob_pattern = "/home/jonny/.rustup/**/*.rs".to_string();
+    let before = 50;
+    let after = 80;
     let fh = FolderHandler::new(match_pattern, glob_pattern, before, after).unwrap();
     let results = fh.run().unwrap();
     results.iter().for_each(|(filename, line_blocks)| {

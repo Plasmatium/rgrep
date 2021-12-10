@@ -1,7 +1,7 @@
 use crate::matcher::{FileMatcher, LineBlock};
-use glob::{glob, GlobResult};
+use glob::glob;
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use rayon::prelude::*;
 
 type MatchedFileResult = (String, Vec<LineBlock>);
 
@@ -10,7 +10,6 @@ pub struct FolderHandler {
     before: usize,
     after: usize,
     glob_pattern: String,
-    results: Vec<MatchedFileResult>,
 }
 
 impl FolderHandler {
@@ -27,12 +26,12 @@ impl FolderHandler {
             glob_pattern,
             before,
             after,
-            results: vec![],
         })
     }
 
     pub fn run(&self) -> anyhow::Result<Vec<MatchedFileResult>> {
         let ret: Vec<MatchedFileResult> = glob(&self.glob_pattern)?
+            .par_bridge()
             .map(|entry| -> MatchedFileResult {
                 let path = entry.expect("failed to glob file");
                 let fm = FileMatcher::new(&path, self.before, self.after, self.re.clone())
