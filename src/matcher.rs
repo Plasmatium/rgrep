@@ -17,8 +17,8 @@ use regex::Regex;
 pub struct FileMatcher {
     iter: Lines<BufReader<File>>,
     last_matched_line: usize,
-    before_lines: usize,
-    after_lines: usize,
+    before: usize,
+    after: usize,
     re: Regex,
 }
 
@@ -34,15 +34,15 @@ impl FileMatcher {
         Ok(Self {
             iter,
             last_matched_line: 0,
-            before_lines: before,
-            after_lines: after,
+            before,
+            after,
             re,
         })
     }
 
     pub fn run(self) -> anyhow::Result<Vec<LineBlock>> {
-        let max_len = cmp::max(self.after_lines, self.before_lines);
-        let mut around_lines: VecDeque<Arc<LineWrap>> = VecDeque::with_capacity(max_len);
+        // let max_len = cmp::max(self.after_lines, self.before_lines);
+        let mut before_lines: VecDeque<Arc<LineWrap>> = VecDeque::with_capacity(max_len);
         let mut result: Vec<LineBlock> = Vec::new();
 
         // step1: ensure around_lines
@@ -59,13 +59,13 @@ impl FileMatcher {
                 content,
                 exact_matched: false,
             });
-            if around_lines.len() > max_len {
-                around_lines.pop_front();
+            if before_lines.len() > self.before {
+                before_lines.pop_front();
             }
 
             // step2: add -A to last matched
             if let Some(last) = result.last_mut() {
-                if last.after.len() < self.after_lines {
+                if last.after.len() < self.after {
                     last.after.push(lw.clone())
                 }
             }
@@ -84,9 +84,9 @@ impl FileMatcher {
                     exact_matched: true,
                 });
                 if let Some(last) = result.last_mut() {
-                    if last.need_to_merge(lw.lineno, self.after_lines + self.before_lines) {
+                    if last.need_to_merge(lw.lineno, self.after + self.before) {
                         // this line matched<, last matched exists, need to merge this line match to last matched
-                        last.extend_medium_to(around_lines.clone().into(), lw)?;
+                        last.extend_medium_to(before_lines.clone().into(), lw, self.after, self.before)?;
                         // no need to concern step5, should continue here
                         continue;
                     }
@@ -94,14 +94,14 @@ impl FileMatcher {
                 // step5: add all -B to current match
                 // no need to merge this line match to last matched,
                 // just push this match to result
-                let before = calc_before_lines(around_lines.clone().into(), self.before_lines);
+                let before = calc_before_lines(before_lines.clone().into(), self.before);
                 result.push(LineBlock {
                     before,
                     medium: vec![lw.clone()],
                     after: vec![],
                 })
             }
-            around_lines.push_back(lw);
+            before_lines.push_back(lw);
         }
         Ok(result)
     }
@@ -143,18 +143,41 @@ impl fmt::Display for LineBlock {
 impl LineBlock {
     fn extend_medium_to(
         &mut self,
-        around_lines: Vec<Arc<LineWrap>>,
+        before_lines: Vec<Arc<LineWrap>>,
         curr_matched_line: Arc<LineWrap>,
+        after: usize,
+        before: usize,
     ) -> anyhow::Result<()> {
         let curr_medium_last_line_wrap = self.medium.last().ok_or(anyhow!(
             crate::error::FileMatcherError::InvalidLineBlockMissingMedium
         ))?;
+        // need must >= 0 or panic
         let need = curr_matched_line.lineno - curr_medium_last_line_wrap.lineno - 1;
-        let idx_end = need as i64 - around_lines.len() as i64;
+        // after + before <= 0 or panic
+        if self.after.len() + before_lines.len() > need {
+            panic!("oops... 'after + before > need' should forbidden")
+        }
+
+        let overlapped = self.after.len() + before_lines.len() - need;
+        let ext1 = self.after[]
+
+        match (after, before_lines.len()) {
+            (after, around) if after + around == need => {
+                self.medium.extend_from_slice(&self.after);
+                self.medium.extend_from_slice(&before_lines);
+            }
+            (after, around) if after + around > need => {
+                let exceeded = after + around - need;
+
+            }
+            _ => todo!(),
+        }
+
+        let idx_end = need as i64 - before_lines.len() as i64;
         if idx_end > 0 && self.after.len() >= idx_end as usize {
             let append_from_after = &self.after[..idx_end as usize];
             self.medium.extend_from_slice(append_from_after);
-            self.medium.extend_from_slice(&around_lines);
+            self.medium.extend_from_slice(&before_lines);
         }
         self.medium.push(curr_matched_line);
         self.after.clear();
@@ -187,9 +210,9 @@ fn calc_before_lines(around_lines: Vec<Arc<LineWrap>>, before: usize) -> Vec<Arc
 /* TEST */
 #[test]
 fn test_file_matcher() {
-    let f = "src/matcher.rs";
-    let re = Regex::new(r"(?P<matched>use)").unwrap();
-    let fm = FileMatcher::new(f, 4, 5, re).unwrap();
+    let f = "/home/jonny/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/unwind/src/libunwind.rs";
+    let re = Regex::new(r"(?P<matched>unsafe fn)").unwrap();
+    let fm = FileMatcher::new(f, 50, 80, re).unwrap();
     let result = fm.run().expect("shit!!");
     for lb in result.iter() {
         println!("{}", lb);
